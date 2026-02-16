@@ -42,25 +42,27 @@ fn read_measurements(file_path: &str) -> HashMap<String, StationStats> {
     let mut reader = BufReader::new(file);
 
     let mut stations: HashMap<String, StationStats> = HashMap::new();
-    let mut line = String::with_capacity(200);
+    let mut buf: Vec<u8> = Vec::with_capacity(200);
 
     loop {
-        line.clear();
-        match reader.read_line(&mut line) {
-            Ok(0) => break, // EOF
-            Ok(_) => {
-                // Parse line: "station_name;temperature"
-                if let Some((name, temp_str)) = line.trim().split_once(';') {
-                    let temp: f64 = temp_str.parse().expect("Failed to parse temperature");
+        buf.clear();
+        let bytes_read = reader.read_until(b'\n', &mut buf).expect("Failed to read line");
+        if bytes_read == 0 {
+            break; // EOF
+        }
 
-                    if let Some(stats) = stations.get_mut(name) {
-                        stats.update(temp);
-                    } else {
-                        stations.insert(name.to_string(), StationStats::new(temp));
-                    }
-                }
+        // SAFETY: input file is assumed to be valid UTF-8
+        let line = unsafe { std::str::from_utf8_unchecked(&buf) };
+
+        // Parse line: "station_name;temperature"
+        if let Some((name, temp_str)) = line.trim().split_once(';') {
+            let temp: f64 = temp_str.parse().expect("Failed to parse temperature");
+
+            if let Some(stats) = stations.get_mut(name) {
+                stats.update(temp);
+            } else {
+                stations.insert(name.to_string(), StationStats::new(temp));
             }
-            Err(e) => panic!("Failed to read line: {}", e),
         }
     }
 
