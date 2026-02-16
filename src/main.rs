@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::env;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -12,12 +11,12 @@ struct StationStats {
 }
 
 impl StationStats {
-    fn new(temp: i32) -> Self {
+    fn new() -> Self {
         Self {
-            min: temp,
-            max: temp,
-            sum: temp as i64,
-            count: 1,
+            min: i32::MAX,
+            max: i32::MIN,
+            sum: 0,
+            count: 0,
         }
     }
 
@@ -66,11 +65,77 @@ fn parse_temp(bytes: &[u8]) -> i32 {
     if negative { -value } else { value }
 }
 
-fn read_measurements(file_path: &str) -> HashMap<String, StationStats> {
+const TABLE_SIZE: usize = 8192; // power of 2, ~5% load factor for ~400 stations
+const TABLE_MASK: usize = TABLE_SIZE - 1;
+const MAX_NAME_LEN: usize = 100;
+
+struct Entry {
+    name: [u8; MAX_NAME_LEN],
+    name_len: u8,
+    stats: StationStats,
+}
+
+struct StationTable {
+    entries: Vec<Entry>,
+}
+
+impl StationTable {
+    fn new() -> Self {
+        let mut entries = Vec::with_capacity(TABLE_SIZE);
+        for _ in 0..TABLE_SIZE {
+            entries.push(Entry {
+                name: [0; MAX_NAME_LEN],
+                name_len: 0,
+                stats: StationStats::new(),
+            });
+        }
+        Self { entries }
+    }
+
+    #[inline(always)]
+    fn hash(name: &[u8]) -> usize {
+        // Cheap hash: read first bytes as integer + mix with length
+        let mut h: usize = name.len();
+        for &b in name.iter().take(8) {
+            h = h.wrapping_mul(31).wrapping_add(b as usize);
+        }
+        h
+    }
+
+    #[inline(always)]
+    fn lookup_or_insert(&mut self, name: &[u8], temp: i32) {
+        let mut idx = Self::hash(name) & TABLE_MASK;
+
+        loop {
+            let entry = &mut self.entries[idx];
+
+            if entry.name_len == 0 {
+                // Empty slot — insert new entry
+                entry.name[..name.len()].copy_from_slice(name);
+                entry.name_len = name.len() as u8;
+                entry.stats.update(temp);
+                return;
+            }
+
+            if entry.name_len as usize == name.len()
+                && &entry.name[..name.len()] == name
+            {
+                // Found existing entry
+                entry.stats.update(temp);
+                return;
+            }
+
+            // Collision — linear probe
+            idx = (idx + 1) & TABLE_MASK;
+        }
+    }
+}
+
+fn read_measurements(file_path: &str) -> StationTable {
     let file = File::open(file_path).expect("Failed to open file");
     let mut reader = BufReader::new(file);
 
-    let mut stations: HashMap<String, StationStats> = HashMap::new();
+    let mut table = StationTable::new();
     let mut buf: Vec<u8> = Vec::with_capacity(200);
 
     loop {
@@ -92,34 +157,38 @@ fn read_measurements(file_path: &str) -> HashMap<String, StationStats> {
             sep += 1;
         }
 
-        // SAFETY: station names are assumed to be valid UTF-8
-        let name = unsafe { std::str::from_utf8_unchecked(&bytes[..sep]) };
+        let name = &bytes[..sep];
         let temp = parse_temp(&bytes[sep + 1..]);
 
-        if let Some(stats) = stations.get_mut(name) {
-            stats.update(temp);
-        } else {
-            stations.insert(name.to_string(), StationStats::new(temp));
+        table.lookup_or_insert(name, temp);
+    }
+
+    table
+}
+
+fn output_results(table: &StationTable) {
+    // Collect occupied entries
+    let mut results: Vec<(&[u8], &StationStats)> = Vec::new();
+    for entry in &table.entries {
+        if entry.name_len > 0 {
+            results.push((&entry.name[..entry.name_len as usize], &entry.stats));
         }
     }
 
-    stations
-}
+    // Sort alphabetically by station name
+    results.sort_by(|a, b| a.0.cmp(b.0));
 
-fn output_results(stations: &HashMap<String, StationStats>) {
-    // Sort stations alphabetically
-    let mut sorted_stations: Vec<_> = stations.iter().collect();
-    sorted_stations.sort_by(|a, b| a.0.cmp(b.0));
-
-    // Output results in the expected format
+    // Output results
     print!("{{");
-    for (i, (name, stats)) in sorted_stations.iter().enumerate() {
+    for (i, (name, stats)) in results.iter().enumerate() {
         if i > 0 {
             print!(", ");
         }
+        // SAFETY: station names are assumed to be valid UTF-8
+        let name_str = unsafe { std::str::from_utf8_unchecked(name) };
         print!(
             "{}={:.1}/{:.1}/{:.1}",
-            name,
+            name_str,
             stats.min_f64(),
             stats.mean(),
             stats.max_f64()
@@ -132,6 +201,6 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let file_path = args.get(1).map(|s| s.as_str()).unwrap_or("measurements.txt");
 
-    let stations = read_measurements(file_path);
-    output_results(&stations);
+    let table = read_measurements(file_path);
+    output_results(&table);
 }
