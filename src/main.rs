@@ -39,21 +39,27 @@ impl StationStats {
 
 fn read_measurements(file_path: &str) -> HashMap<String, StationStats> {
     let file = File::open(file_path).expect("Failed to open file");
-    let reader = BufReader::new(file);
+    let mut reader = BufReader::new(file);
 
     let mut stations: HashMap<String, StationStats> = HashMap::new();
+    let mut line = String::with_capacity(200);
 
-    for line in reader.lines() {
-        let line = line.expect("Failed to read line");
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => break, // EOF
+            Ok(_) => {
+                // Parse line: "station_name;temperature"
+                if let Some((name, temp_str)) = line.trim().split_once(';') {
+                    let temp: f64 = temp_str.parse().expect("Failed to parse temperature");
 
-        // Parse line: "station_name;temperature"
-        if let Some((name, temp_str)) = line.split_once(';') {
-            let temp: f64 = temp_str.parse().expect("Failed to parse temperature");
-
-            stations
-                .entry(name.to_string())
-                .and_modify(|stats| stats.update(temp))
-                .or_insert_with(|| StationStats::new(temp));
+                    stations
+                        .entry(name.to_string())
+                        .and_modify(|stats| stats.update(temp))
+                        .or_insert_with(|| StationStats::new(temp));
+                }
+            }
+            Err(e) => panic!("Failed to read line: {}", e),
         }
     }
 
