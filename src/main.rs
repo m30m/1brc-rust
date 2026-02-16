@@ -5,36 +5,65 @@ use std::io::{BufRead, BufReader};
 
 #[derive(Debug)]
 struct StationStats {
-    min: f64,
-    max: f64,
-    sum: f64,
+    min: i32,
+    max: i32,
+    sum: i64,
     count: u64,
 }
 
 impl StationStats {
-    fn new(temp: f64) -> Self {
+    fn new(temp: i32) -> Self {
         Self {
             min: temp,
             max: temp,
-            sum: temp,
+            sum: temp as i64,
             count: 1,
         }
     }
 
-    fn update(&mut self, temp: f64) {
+    fn update(&mut self, temp: i32) {
         if temp < self.min {
             self.min = temp;
         }
         if temp > self.max {
             self.max = temp;
         }
-        self.sum += temp;
+        self.sum += temp as i64;
         self.count += 1;
     }
 
     fn mean(&self) -> f64 {
-        self.sum / self.count as f64
+        self.sum as f64 / self.count as f64 / 10.0
     }
+
+    fn min_f64(&self) -> f64 {
+        self.min as f64 / 10.0
+    }
+
+    fn max_f64(&self) -> f64 {
+        self.max as f64 / 10.0
+    }
+}
+
+/// Parses a temperature like "-12.3" or "4.5" as an i32 scaled by 10 (e.g. -123, 45).
+/// Assumes exactly one decimal digit.
+fn parse_temp(bytes: &[u8]) -> i32 {
+    let (negative, start) = if bytes[0] == b'-' {
+        (true, 1)
+    } else {
+        (false, 0)
+    };
+
+    let mut value: i32 = 0;
+    let mut i = start;
+    while bytes[i] != b'.' {
+        value = value * 10 + (bytes[i] - b'0') as i32;
+        i += 1;
+    }
+    // skip '.', parse the single decimal digit
+    value = value * 10 + (bytes[i + 1] - b'0') as i32;
+
+    if negative { -value } else { value }
 }
 
 fn read_measurements(file_path: &str) -> HashMap<String, StationStats> {
@@ -51,18 +80,26 @@ fn read_measurements(file_path: &str) -> HashMap<String, StationStats> {
             break; // EOF
         }
 
-        // SAFETY: input file is assumed to be valid UTF-8
-        let line = unsafe { std::str::from_utf8_unchecked(&buf) };
+        // Strip trailing newline/carriage return
+        let mut len = buf.len();
+        if len > 0 && buf[len - 1] == b'\n' { len -= 1; }
+        if len > 0 && buf[len - 1] == b'\r' { len -= 1; }
+        let bytes = &buf[..len];
 
-        // Parse line: "station_name;temperature"
-        if let Some((name, temp_str)) = line.trim().split_once(';') {
-            let temp: f64 = temp_str.parse().expect("Failed to parse temperature");
+        // Find ';' separator by scanning bytes
+        let mut sep = 0;
+        while bytes[sep] != b';' {
+            sep += 1;
+        }
 
-            if let Some(stats) = stations.get_mut(name) {
-                stats.update(temp);
-            } else {
-                stations.insert(name.to_string(), StationStats::new(temp));
-            }
+        // SAFETY: station names are assumed to be valid UTF-8
+        let name = unsafe { std::str::from_utf8_unchecked(&bytes[..sep]) };
+        let temp = parse_temp(&bytes[sep + 1..]);
+
+        if let Some(stats) = stations.get_mut(name) {
+            stats.update(temp);
+        } else {
+            stations.insert(name.to_string(), StationStats::new(temp));
         }
     }
 
@@ -83,9 +120,9 @@ fn output_results(stations: &HashMap<String, StationStats>) {
         print!(
             "{}={:.1}/{:.1}/{:.1}",
             name,
-            stats.min,
+            stats.min_f64(),
             stats.mean(),
-            stats.max
+            stats.max_f64()
         );
     }
     println!("}}");
