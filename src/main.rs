@@ -37,10 +37,7 @@ impl StationStats {
     }
 }
 
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    let file_path = args.get(1).map(|s| s.as_str()).unwrap_or("measurements.txt");
-
+fn read_measurements(file_path: &str) -> HashMap<String, StationStats> {
     let file = File::open(file_path).expect("Failed to open file");
     let reader = BufReader::new(file);
 
@@ -60,6 +57,10 @@ fn main() {
         }
     }
 
+    stations
+}
+
+fn output_results(stations: &HashMap<String, StationStats>) {
     // Sort stations alphabetically
     let mut sorted_stations: Vec<_> = stations.iter().collect();
     sorted_stations.sort_by(|a, b| a.0.cmp(b.0));
@@ -79,4 +80,12 @@ fn main() {
         );
     }
     println!("}}");
+}
+
+fn main() {
+    let args: Vec<String> = env::args().collect();
+    let file_path = args.get(1).map(|s| s.as_str()).unwrap_or("measurements.txt");
+
+    let stations = read_measurements(file_path);
+    output_results(&stations);
 }
