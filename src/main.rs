@@ -65,7 +65,7 @@ fn parse_temp(bytes: &[u8]) -> i32 {
     if negative { -value } else { value }
 }
 
-const TABLE_SIZE: usize = 8192; // power of 2, ~5% load factor for ~400 stations
+const TABLE_SIZE: usize = 65536; // power of 2, handles up to ~10k stations
 const TABLE_MASK: usize = TABLE_SIZE - 1;
 const MAX_NAME_LEN: usize = 100;
 
