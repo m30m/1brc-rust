@@ -94,12 +94,19 @@ impl StationTable {
 
     #[inline(always)]
     fn hash(name: &[u8]) -> usize {
-        // Read first 8 bytes as a u64 in one load, mix with length
+        // Read first 8 bytes as a u64 in one load, then apply a fast finalizer
         let mut buf = [0u8; 8];
         let n = name.len().min(8);
         buf[..n].copy_from_slice(&name[..n]);
-        let h = u64::from_ne_bytes(buf) as usize;
-        h ^ name.len()
+        let mut h = u64::from_ne_bytes(buf);
+        h ^= name.len() as u64;
+        // Stafford variant 13 finalizer (used in splitmix64)
+        h ^= h >> 30;
+        h = h.wrapping_mul(0xbf58476d1ce4e5b9);
+        h ^= h >> 27;
+        h = h.wrapping_mul(0x94d049bb133111eb);
+        h ^= h >> 31;
+        h as usize
     }
 
     #[inline(always)]
