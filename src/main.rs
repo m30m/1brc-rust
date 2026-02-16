@@ -1,6 +1,6 @@
 use std::env;
 use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::os::unix::io::AsRawFd;
 
 #[derive(Debug)]
 struct StationStats {
@@ -131,36 +131,51 @@ impl StationTable {
     }
 }
 
+fn mmap_file(file: &File) -> &[u8] {
+    let len = file.metadata().expect("Failed to get file metadata").len() as usize;
+    if len == 0 {
+        return &[];
+    }
+    unsafe {
+        let ptr = libc::mmap(
+            std::ptr::null_mut(),
+            len,
+            libc::PROT_READ,
+            libc::MAP_PRIVATE,
+            file.as_raw_fd(),
+            0,
+        );
+        assert!(ptr != libc::MAP_FAILED, "mmap failed");
+        std::slice::from_raw_parts(ptr as *const u8, len)
+    }
+}
+
 fn read_measurements(file_path: &str) -> StationTable {
     let file = File::open(file_path).expect("Failed to open file");
-    let mut reader = BufReader::new(file);
+    let data = mmap_file(&file);
 
     let mut table = StationTable::new();
-    let mut buf: Vec<u8> = Vec::with_capacity(200);
+    let mut pos = 0;
 
-    loop {
-        buf.clear();
-        let bytes_read = reader.read_until(b'\n', &mut buf).expect("Failed to read line");
-        if bytes_read == 0 {
-            break; // EOF
-        }
-
-        // Strip trailing newline/carriage return
-        let mut len = buf.len();
-        if len > 0 && buf[len - 1] == b'\n' { len -= 1; }
-        if len > 0 && buf[len - 1] == b'\r' { len -= 1; }
-        let bytes = &buf[..len];
-
-        // Find ';' separator by scanning bytes
-        let mut sep = 0;
-        while bytes[sep] != b';' {
+    while pos < data.len() {
+        // Find ';' separator
+        let mut sep = pos;
+        while data[sep] != b';' {
             sep += 1;
         }
 
-        let name = &bytes[..sep];
-        let temp = parse_temp(&bytes[sep + 1..]);
+        // Find end of line
+        let mut end = sep + 1;
+        while end < data.len() && data[end] != b'\n' {
+            end += 1;
+        }
+
+        let name = &data[pos..sep];
+        let temp = parse_temp(&data[sep + 1..end]);
 
         table.lookup_or_insert(name, temp);
+
+        pos = end + 1;
     }
 
     table
