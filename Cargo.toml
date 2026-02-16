@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 libc = "0.2.182"
+memchr = "2.8.0"
 
 [profile.release]
 opt-level = 3

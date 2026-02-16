@@ -94,12 +94,12 @@ impl StationTable {
 
     #[inline(always)]
     fn hash(name: &[u8]) -> usize {
-        // Cheap hash: read first bytes as integer + mix with length
-        let mut h: usize = name.len();
-        for &b in name.iter().take(8) {
-            h = h.wrapping_mul(31).wrapping_add(b as usize);
-        }
-        h
+        // Read first 8 bytes as a u64 in one load, mix with length
+        let mut buf = [0u8; 8];
+        let n = name.len().min(8);
+        buf[..n].copy_from_slice(&name[..n]);
+        let h = u64::from_ne_bytes(buf) as usize;
+        h ^ name.len()
     }
 
     #[inline(always)]
@@ -158,20 +158,14 @@ fn read_measurements(file_path: &str) -> StationTable {
     let mut pos = 0;
 
     while pos < data.len() {
-        // Find ';' separator
-        let mut sep = pos;
-        while data[sep] != b';' {
-            sep += 1;
-        }
+        // SIMD-accelerated delimiter search
+        let semi = memchr::memchr(b';', &data[pos..]).unwrap() + pos;
+        let end = memchr::memchr(b'\n', &data[semi + 1..])
+            .map(|i| i + semi + 1)
+            .unwrap_or(data.len());
 
-        // Find end of line
-        let mut end = sep + 1;
-        while end < data.len() && data[end] != b'\n' {
-            end += 1;
-        }
-
-        let name = &data[pos..sep];
-        let temp = parse_temp(&data[sep + 1..end]);
+        let name = &data[pos..semi];
+        let temp = parse_temp(&data[semi + 1..end]);
 
         table.lookup_or_insert(name, temp);
 
