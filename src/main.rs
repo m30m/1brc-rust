@@ -53,10 +53,11 @@ fn read_measurements(file_path: &str) -> HashMap<String, StationStats> {
                 if let Some((name, temp_str)) = line.trim().split_once(';') {
                     let temp: f64 = temp_str.parse().expect("Failed to parse temperature");
 
-                    stations
-                        .entry(name.to_string())
-                        .and_modify(|stats| stats.update(temp))
-                        .or_insert_with(|| StationStats::new(temp));
+                    if let Some(stats) = stations.get_mut(name) {
+                        stats.update(temp);
+                    } else {
+                        stations.insert(name.to_string(), StationStats::new(temp));
+                    }
                 }
             }
             Err(e) => panic!("Failed to read line: {}", e),
